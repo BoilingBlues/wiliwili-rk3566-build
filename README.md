@@ -1,18 +1,18 @@
-# wiliwili-rk3566
+# wiliwili-rk3566-build
 
-在 x86_64 主机上为 **RK3566**（LCKFB 泰山派 / Armbian aarch64）交叉编译带 **V4L2 Request 硬件解码** 的 [wiliwili](https://github.com/xfangfang/wiliwili)。
+在 x86_64 主机上为 **RK3566** 交叉编译带 **V4L2 Request 硬件解码** 的 [wiliwili](https://github.com/xfangfang/wiliwili)。
 
-本仓库由 **Grok Build CLI**（xAI）辅助生成。
+**这不是 wiliwili 的 fork**，而是交叉编译脚本和补丁。本仓库由 **Grok Build CLI**（xAI）辅助生成。已在 LCKFB 泰山派 + Armbian（aarch64 主线内核）上验证。
 
 ## 这是什么
 
 上游 Linux 发行版里的 mpv / FFmpeg 往往编不进 Rockchip 的 `v4l2request` 硬解。本仓库提供：
 
 - 可重复的交叉编译脚本（sysroot → FFmpeg → mpv → wiliwili）
-- 一组可回滚的补丁：零拷贝硬解、1080p60 上屏时机、GLES 双线性缩放
+- 一组可回滚的补丁（零拷贝硬解、1080p60 上屏与缩放）
 - 产物目录 `out/`，拷到板子即可运行
 
-克隆下来的 FFmpeg、mpv、wiliwili 源码和 sysroot **不进 git**，避免把数 GB 的树推进 GitHub。
+FFmpeg、mpv、wiliwili 源码和 sysroot **不进 git**。
 
 ## 目标硬件
 
@@ -23,18 +23,14 @@
 | CPU | 4× Cortex-A55 |
 | GPU | Mali-G52 MC1（Panfrost / OpenGL ES 3.1） |
 | VPU | `rkvdec`（H.264 / HEVC，V4L2 Request） |
-| 系统 | Armbian（aarch64，glibc 不新于 sysroot） |
+| 系统 | Armbian aarch64（主线内核；其它 Debian/Ubuntu 主线镜像可试，不保证） |
 | 显示 | Wayland（如 KDE Plasma） |
-
-1080p60 在这颗 GPU 上要用便宜缩放才能稳住；默认 lanczos 容易抖。硬解走通后日志应为 `HW: v4l2request`，不要带 `-copy`。
 
 ## 特性
 
 - FFmpeg 开启 `--enable-v4l2-request`
-- mpv 编进 `v4l2request` 零拷贝对接（修正 `#ifdef` 枚举判断）
+- mpv 编进 `v4l2request` 零拷贝 GL 对接
 - wiliwili 使用 GLES2 + Wayland GLFW
-- 上屏在 `glfwSwapBuffers` 之后再 `report_swap`，减轻 1080p60 抖屏
-- GLES 默认 bilinear 缩放，不必为了流畅去开「低功耗解码」
 - 补丁用 `patches/series` 管理，注释一行即可回滚
 
 ## 依赖（编译主机）
@@ -44,13 +40,13 @@
 - `meson`、`ninja`、`cmake`、`pkg-config`、`debootstrap`、`qemu-user-static`
 - 能 `sudo`（装主机包、做 sysroot）
 
-脚本会尝试安装主机依赖。sysroot 的 glibc **不能新于板子**，否则编出来的二进制在板上跑不起来。
+脚本会尝试安装主机依赖。
 
 ## 快速开始
 
 ```bash
-git clone <本仓库 URL>
-cd wiliwili-rk3566   # 或你 clone 下来的目录名
+git clone https://github.com/BoilingBlues/wiliwili-rk3566-build.git
+cd wiliwili-rk3566-build
 chmod +x build.sh
 ./build.sh
 ```
@@ -58,7 +54,7 @@ chmod +x build.sh
 默认跑完全流程。完成后把 `out/` 整目录拷到板子：
 
 ```bash
-scp -r out/ taron@板子IP:~/
+scp -r out/ user@板子IP:~/
 # 在板子上
 cd ~/out
 ./run-wiliwili.sh
@@ -74,12 +70,6 @@ cd ~/out
 ./build.sh --rebuild-mpv         # 硬解补丁变更后重编 mpv
 ./build.sh --rebuild-wiliwili    # 播放/缩放补丁变更后重编客户端
 ./build.sh --clean               # 清编译缓存，保留 sysroot 的 apt
-```
-
-源码属主若是 root，打补丁前需要：
-
-```bash
-sudo chown -R "$(id -un):$(id -gn)" mpv wiliwili
 ```
 
 ## 目录
@@ -98,7 +88,7 @@ sudo chown -R "$(id -un):$(id -gn)" mpv wiliwili
 └── out/                       # 产物，已 gitignore
 ```
 
-`aarch64-cross.ini`、`aarch64-toolchain.cmake`、`cross-pkg-config` 由 `build.sh` 按当前目录生成，不要把带本机绝对路径的版本提交上去。
+`aarch64-cross.ini`、`aarch64-toolchain.cmake`、`cross-pkg-config` 由 `build.sh` 按当前目录生成，不要提交带本机绝对路径的版本。
 
 ## 补丁
 
@@ -109,26 +99,42 @@ sudo chown -R "$(id -un):$(id -gn)" mpv wiliwili
 | 文件 | 作用 |
 | --- | --- |
 | `mpv-v4l2request-hwdec.patch` | 把 `v4l2request` / `v4l2request-copy` 加入硬解白名单 |
-| `mpv-v4l2request-zerocopy-interop.patch` | 真正编进零拷贝 GL 对接。原补丁用 `#ifdef` 判断枚举，恒为假，只能落到 copy |
-
-回到 copy 路径：注释第二份补丁，然后 `./build.sh --rebuild-mpv`。
+| `mpv-v4l2request-zerocopy-interop.patch` | 编进零拷贝 GL 对接驱动 |
 
 ### wiliwili（`patches/wiliwili.series`）
 
 | 文件 | 作用 |
 | --- | --- |
 | `wiliwili-present-sync.patch` | `report_swap` 挪到 SwapBuffers 之后；`video-timing-offset=0.050` |
-| `wiliwili-gles-bilinear-1080p60.patch` | GLES 默认 bilinear，1080p60 不必开「低功耗解码」 |
+| `wiliwili-gles-bilinear-1080p60.patch` | GLES 默认 bilinear 缩放 |
 
-### 板上现象对照
+回滚某补丁：在对应 series 里注释掉该行，再 `--rebuild-mpv` 或 `--rebuild-wiliwili`。
 
-| 日志 / 现象 | 含义 |
-| --- | --- |
-| `HW: v4l2request-copy` | VPU 在解，但帧被拷回 CPU，1080p 往往比软解还卡 |
-| `HW: v4l2request` | 零拷贝，DMA-BUF 进 GPU |
-| 关低功耗就 1080p60 抖 | Mali-G52 扛不住默认 lanczos；用 bilinear 补丁 |
-| 播放器全屏只铺满窗口 | 设置里打开「应用内全屏时自动切换窗口全屏」 |
-| 内存够仍偶发顿 | 降低 `vm.swappiness`（例如 10）。zram 不改变硬解路径 |
+## 常见问题
+
+**编出来的程序在板上无法运行。**  
+sysroot 的 glibc 不能新于板子。本构建按 Ubuntu/Debian 系 aarch64 交叉，绑的是主线内核 + glibc，不是 Armbian 商标。厂商 4.19 + MPP/`rkmpp`、musl、Android、更新的 Fedora glibc 一般都对不上。
+
+**`git apply` 失败，提示源码不可写。**
+
+```bash
+sudo chown -R "$(id -un):$(id -gn)" mpv wiliwili
+```
+
+**日志是 `HW: v4l2request-copy`，1080p 比软解还卡。**  
+VPU 在解，但帧被拷回 CPU 再上传。零拷贝成功时应为 `HW: v4l2request`（没有 `-copy`）。未打 `mpv-v4l2request-zerocopy-interop.patch` 时，`#ifdef AV_HWDEVICE_TYPE_V4L2REQUEST` 因枚举不是宏而恒为假，对接驱动会被裁掉。
+
+**1080p60 会抖，开「低功耗解码」就好了。**  
+硬解路径下 skiploopfilter 几乎不起作用；真正减负的是 `profile=fast` 的 bilinear 缩放。Mali-G52 单核用默认 lanczos 往往画不完一帧（16.6ms）。本仓库 GLES 补丁在未开低功耗时也会用 bilinear。另有上屏时机：FBO 画完立刻 `report_swap` 会让 60fps 对 60Hz 错拍。
+
+**播放器全屏只铺满窗口，任务栏还在。**  
+那是应用内全屏。在设置里打开「应用内全屏时自动切换窗口全屏」，走 Wayland 的 `xdg_toplevel_set_fullscreen`。
+
+**内存占用不高，播放仍偶发顿一下。**  
+可把 `vm.swappiness` 降到 `10` 左右，减少往 zram 里换页。zram **不改变**硬解路径，只影响会不会随机停顿。
+
+**能在别的系统上跑吗？**  
+同 SoC、主线 `rkvdec`、Debian/Ubuntu 系、glibc 不旧于本构建，有机会直接跑。换内核栈或 C 库则基本不行。已验证环境是泰山派 + Armbian。
 
 ## 许可
 

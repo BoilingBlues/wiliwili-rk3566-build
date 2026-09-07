@@ -1,0 +1,15 @@
+# 本仓库只跟踪交叉编译脚本、工具链配置和 patches/。
+# 上游克隆与编译产物不入库，避免把 sysroot / 源码树算进历史。
+sysroot/
+out/
+FFmpeg/
+mpv/
+wiliwili/
+wiliwili.tar
+
+# 本地噪声
+*~
+*.swp
+*.swo
+.cache/
+.DS_Store

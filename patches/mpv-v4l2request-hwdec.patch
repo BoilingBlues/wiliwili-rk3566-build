@@ -1,0 +1,120 @@
+Enable jernejsk FFmpeg v4l2request hwdec on Rockchip
+
+--- a/video/decode/vd_lavc.c
++++ b/video/decode/vd_lavc.c
+@@ -270,6 +270,7 @@
+     {"vaapi",           HWDEC_FLAG_AUTO | HWDEC_FLAG_WHITELIST},
+     {"vdpau",           HWDEC_FLAG_AUTO},
+     {"drm",             HWDEC_FLAG_AUTO | HWDEC_FLAG_WHITELIST},
++    {"v4l2request",     HWDEC_FLAG_AUTO | HWDEC_FLAG_WHITELIST},
+     {"mediacodec",      HWDEC_FLAG_AUTO},
+     {"videotoolbox",    HWDEC_FLAG_AUTO | HWDEC_FLAG_WHITELIST},
+     {"d3d11va-copy",    HWDEC_FLAG_AUTO | HWDEC_FLAG_WHITELIST},
+@@ -279,6 +280,7 @@
+     {"vaapi-copy",      HWDEC_FLAG_AUTO | HWDEC_FLAG_WHITELIST},
+     {"vdpau-copy",      HWDEC_FLAG_AUTO | HWDEC_FLAG_WHITELIST},
+     {"drm-copy",        HWDEC_FLAG_AUTO | HWDEC_FLAG_WHITELIST},
++    {"v4l2request-copy", HWDEC_FLAG_AUTO | HWDEC_FLAG_WHITELIST},
+     {"mediacodec-copy", HWDEC_FLAG_AUTO | HWDEC_FLAG_WHITELIST},
+     {"videotoolbox-copy", HWDEC_FLAG_AUTO | HWDEC_FLAG_WHITELIST},
+     {0}
+--- a/video/out/gpu/hwdec.c
++++ b/video/out/gpu/hwdec.c
+@@ -36,6 +36,9 @@
+ extern const struct ra_hwdec_driver ra_hwdec_cuda;
+ extern const struct ra_hwdec_driver ra_hwdec_drmprime;
+ extern const struct ra_hwdec_driver ra_hwdec_drmprime_overlay;
++#ifdef AV_HWDEVICE_TYPE_V4L2REQUEST
++extern const struct ra_hwdec_driver ra_hwdec_drmprime_v4l2request;
++#endif
+ extern const struct ra_hwdec_driver ra_hwdec_aimagereader;
+ extern const struct ra_hwdec_driver ra_hwdec_vulkan;
+ 
+@@ -72,6 +75,9 @@
+ #if HAVE_DRM
+     &ra_hwdec_drmprime,
+     &ra_hwdec_drmprime_overlay,
++#ifdef AV_HWDEVICE_TYPE_V4L2REQUEST
++    &ra_hwdec_drmprime_v4l2request,
++#endif
+ #endif
+ #if HAVE_ANDROID_MEDIA_NDK
+     &ra_hwdec_aimagereader,
+--- a/video/out/hwdec/hwdec_drmprime.c
++++ b/video/out/hwdec/hwdec_drmprime.c
+@@ -109,15 +109,27 @@
+     struct drm_opts *drm_opts = mp_get_config_group(tmp, hw->global, &drm_conf);
+     const char *opt_path = drm_opts->device_path;
+ 
+-    const char *device_path = params && params->render_fd > -1 ?
+-                              drmGetRenderDeviceNameFromFd(params->render_fd) :
+-                              opt_path ? opt_path : "/dev/dri/renderD128";
+-    MP_VERBOSE(hw, "Using DRM device: %s\n", device_path);
+-
+-    int ret = av_hwdevice_ctx_create(&p->hwctx.av_device_ref,
++    int ret;
++#ifdef AV_HWDEVICE_TYPE_V4L2REQUEST
++    if (hw->driver->device_type == AV_HWDEVICE_TYPE_V4L2REQUEST) {
++        MP_VERBOSE(hw, "Using V4L2 Request API (auto-detect media device)\n");
++        ret = av_hwdevice_ctx_create(&p->hwctx.av_device_ref,
++                                     AV_HWDEVICE_TYPE_V4L2REQUEST,
++                                     NULL, NULL, 0);
++        talloc_free(tmp);
++    } else
++#endif
++    {
++        const char *device_path = params && params->render_fd > -1 ?
++                                  drmGetRenderDeviceNameFromFd(params->render_fd) :
++                                  opt_path ? opt_path : "/dev/dri/renderD128";
++        MP_VERBOSE(hw, "Using DRM device: %s\n", device_path);
++
++        ret = av_hwdevice_ctx_create(&p->hwctx.av_device_ref,
+                                      AV_HWDEVICE_TYPE_DRM,
+                                      device_path, NULL, 0);
+-    talloc_free(tmp);
++        talloc_free(tmp);
++    }
+     if (ret != 0) {
+         MP_VERBOSE(hw, "Failed to create hwdevice_ctx: %s\n", av_err2str(ret));
+         return -1;
+@@ -303,6 +315,14 @@
+     return -1;
+ }
+ 
++static const struct ra_hwdec_mapper_driver drmprime_mapper = {
++    .priv_size = sizeof(struct dmabuf_interop_priv),
++    .init = mapper_init,
++    .uninit = mapper_uninit,
++    .map = mapper_map,
++    .unmap = mapper_unmap,
++};
++
+ const struct ra_hwdec_driver ra_hwdec_drmprime = {
+     .name = "drmprime",
+     .priv_size = sizeof(struct priv_owner),
+@@ -310,11 +330,17 @@
+     .device_type = AV_HWDEVICE_TYPE_DRM,
+     .init = init,
+     .uninit = uninit,
+-    .mapper = &(const struct ra_hwdec_mapper_driver){
+-        .priv_size = sizeof(struct dmabuf_interop_priv),
+-        .init = mapper_init,
+-        .uninit = mapper_uninit,
+-        .map = mapper_map,
+-        .unmap = mapper_unmap,
+-    },
+-};
++    .mapper = &drmprime_mapper,
++};
++
++#ifdef AV_HWDEVICE_TYPE_V4L2REQUEST
++const struct ra_hwdec_driver ra_hwdec_drmprime_v4l2request = {
++    .name = "v4l2request",
++    .priv_size = sizeof(struct priv_owner),
++    .imgfmts = {IMGFMT_DRMPRIME, 0},
++    .device_type = AV_HWDEVICE_TYPE_V4L2REQUEST,
++    .init = init,
++    .uninit = uninit,
++    .mapper = &drmprime_mapper,
++};
++#endif

@@ -50,7 +50,8 @@ sudo apt-get install -y \
     crossbuild-essential-arm64 \
     debootstrap binfmt-support \
     cmake meson ninja-build pkg-config \
-    git wget curl python3 file
+    git wget curl python3 file \
+    libwayland-bin
 ```
 
 再装 QEMU 用户态模拟（二选一）：
@@ -70,7 +71,8 @@ sudo dnf install -y \
     gcc-aarch64-linux-gnu gcc-c++-aarch64-linux-gnu \
     qemu-user-static debootstrap \
     cmake meson ninja-build pkgconf \
-    git wget curl python3 file
+    git wget curl python3 file \
+    wayland-devel
 ```
 
 交叉编译器须是 **x86_64** 上的 `aarch64-linux-gnu-gcc`，不能是板子上拷来的 aarch64 二进制。
@@ -150,6 +152,9 @@ cd ~/out
 
 **`make install` 报 `mkdir: Permission denied`（`install-examples`）。**  
 库已经编完，失败在往 sysroot 里装 examples。sysroot 是 root 建的。拉最新脚本后重跑 `./build.sh --ffmpeg`：会把 `sysroot/usr/local` 改成当前用户可写，并且只安装库和头文件。
+
+**mpv meson 报 `Program 'wayland-scanner' not found`。**  
+这是 **x86_64 主机**上的代码生成器，不是 sysroot 里的 aarch64 库。Ubuntu 装 `libwayland-bin`，Fedora 装 `wayland-devel`。装好后删掉 `mpv/build` 再 `./build.sh --rebuild-mpv`。
 
 **`Unable to locate package qemu-aarch64-static`。**  
 那是二进制名。24.04 装 `qemu-user-static`（universe）；25.10+ 装 `qemu-user` / `qemu-user-binfmt`。不要 `apt install qemu-aarch64-static`。

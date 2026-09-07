@@ -129,6 +129,9 @@ check_host_deps() {
     if ! qemu_aarch64_bin >/dev/null; then
         missing+=("qemu-aarch64（包名 qemu-user-static 或 qemu-user，不是 qemu-aarch64-static）")
     fi
+    if ! command -v wayland-scanner >/dev/null 2>&1; then
+        missing+=("wayland-scanner（主机工具，Ubuntu 包 libwayland-bin，Fedora 包 wayland-devel）")
+    fi
 
     if [ ! -x "${HOST_CC}" ] || [ ! -x "${HOST_CXX}" ]; then
         missing+=("${HOST_CC}")
@@ -356,6 +359,7 @@ cpp = '${HOST_CXX}'
 ar = '${HOST_AR}'
 strip = '${HOST_STRIP}'
 pkg-config = '${WORK_DIR}/cross-pkg-config'
+wayland-scanner = '$(command -v wayland-scanner)'
 
 [host_machine]
 system = 'linux'

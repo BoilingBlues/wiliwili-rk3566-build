@@ -1,0 +1,34 @@
+Use bilinear GPU scale on GLES for 1080p60 without low-quality decode
+
+Enabling "low quality decode" stops 1080p60 judder on Mali-G52 because
+it sets profile=fast (bilinear scale, no dither). The skiploopfilter
+path does not run under v4l2request hwdec. Apply the GPU-cheap options
+on GLES even when that setting is off.
+
+Apply after wiliwili-present-sync.patch.
+
+--- a/wiliwili/source/view/mpv_core.cpp
++++ b/wiliwili/source/view/mpv_core.cpp
+@@ -345,6 +345,22 @@
+         }
+     }
+ 
++#if defined(USE_GLES2) || defined(USE_GLES3)
++    // 1080p60 on Mali-G52: default lanczos/dither cannot finish in 16.6ms.
++    // This is the GPU half of "low quality decode". Loop filter stays on.
++    if (!MPVCore::LOW_QUALITY) {
++        mpvSetOptionString(mpv, "scale", "bilinear");
++        mpvSetOptionString(mpv, "dscale", "bilinear");
++        mpvSetOptionString(mpv, "cscale", "bilinear");
++        mpvSetOptionString(mpv, "dither", "no");
++        mpvSetOptionString(mpv, "correct-downscaling", "no");
++        mpvSetOptionString(mpv, "linear-downscaling", "no");
++        mpvSetOptionString(mpv, "sigmoid-upscaling", "no");
++        mpvSetOptionString(mpv, "hdr-compute-peak", "no");
++        brls::Logger::info("GLES: bilinear scale for 1080p60");
++    }
++#endif
++
+     if (MPVCore::INMEMORY_CACHE) {
+         // cache
+         brls::Logger::info("set memory cache: {}MB", MPVCore::INMEMORY_CACHE);

@@ -1,5 +1,6 @@
 # wiliwili 补丁应用顺序。以 # 开头的行会被跳过。
 #
-# 回溯 1080p60 抖屏修复：注释下一行后 ./build.sh --rebuild-wiliwili
+# 回溯 1080p60 抖屏修复：注释下面两行后 ./build.sh --rebuild-wiliwili
 #
 wiliwili-present-sync.patch
+wiliwili-gles-bilinear-1080p60.patch

@@ -1,11 +1,16 @@
-# 本仓库只跟踪交叉编译脚本、工具链配置和 patches/。
-# 上游克隆与编译产物不入库，避免把 sysroot / 源码树算进历史。
+# 本仓库只跟踪脚本、补丁和文档。
+# 上游克隆、sysroot、产物和本机生成的交叉配置不入库。
 sysroot/
 out/
 FFmpeg/
 mpv/
 wiliwili/
 wiliwili.tar
+
+# 由 build.sh 按 WORK_DIR 生成，含本机绝对路径
+aarch64-cross.ini
+aarch64-toolchain.cmake
+cross-pkg-config
 
 # 本地噪声
 *~

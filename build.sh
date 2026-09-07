@@ -487,10 +487,10 @@ read_mpv_series() {
 }
 
 mpv_git_apply() {
-    git -c "safe.directory=${1}" apply --whitespace=nowarn "${@:2}"
+    git -c "safe.directory=*" -c "safe.directory=${1}" apply --whitespace=nowarn "${@:2}"
 }
 
-# 补丁是否已经打在 src 上。
+# 补丁是否已经打在 src 上（整份补丁可反向）。
 mpv_patch_applied() {
     local src="$1" patch="$2"
     (cd "${src}" && mpv_git_apply "${src}" --reverse --check "${patch}") >/dev/null 2>&1
@@ -501,11 +501,29 @@ mpv_patch_can_apply() {
     (cd "${src}" && mpv_git_apply "${src}" --check "${patch}") >/dev/null 2>&1
 }
 
+# 第一份补丁被第二份叠上之后，git apply --reverse 会失败；用内容判断。
+mpv_patch_semantically_applied() {
+    local src="$1" name="$2"
+    case "${name}" in
+        mpv-v4l2request-hwdec.patch)
+            grep -q '{"v4l2request"' "${src}/video/decode/vd_lavc.c" 2>/dev/null \
+                && grep -q 'ra_hwdec_drmprime_v4l2request' "${src}/video/out/hwdec/hwdec_drmprime.c" 2>/dev/null
+            ;;
+        mpv-v4l2request-zerocopy-interop.patch)
+            grep -q 'ra_hwdec_drmprime_v4l2request' "${src}/video/out/gpu/hwdec.c" 2>/dev/null \
+                && ! grep -q '#ifdef AV_HWDEVICE_TYPE_V4L2REQUEST' "${src}/video/out/gpu/hwdec.c" 2>/dev/null
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
 apply_one_mpv_patch() {
-    local src="$1" patch="$2" name
+    local src="$1" patch="$2" name err
     name="$(basename "${patch}")"
     [ -f "${patch}" ] || die "缺少 mpv 补丁: ${patch}"
-    if mpv_patch_applied "${src}" "${patch}"; then
+    if mpv_patch_applied "${src}" "${patch}" || mpv_patch_semantically_applied "${src}" "${name}"; then
         info "补丁已应用，跳过: ${name}"
         return 0
     fi
@@ -515,7 +533,19 @@ apply_one_mpv_patch() {
         PATCHES_CHANGED=true
         return 0
     fi
-    die "补丁无法应用（既不是未打也不是已打）: ${name}"
+    # 部分 hunk 已打过：GNU patch -N 会跳过已应用块。
+    if command -v patch >/dev/null 2>&1; then
+        if (cd "${src}" && patch -p1 --forward --dry-run -i "${patch}") >/dev/null 2>&1; then
+            info "应用补丁 (patch --forward): ${name}"
+            (cd "${src}" && patch -p1 --forward -i "${patch}") || die "应用补丁失败: ${name}"
+            PATCHES_CHANGED=true
+            return 0
+        fi
+    fi
+    err="$(cd "${src}" && mpv_git_apply "${src}" --verbose --check "${patch}" 2>&1 || true)"
+    die "补丁无法应用: ${name}
+${err}
+可删除后重下: rm -rf ${src} && $0 --rebuild-mpv"
 }
 
 reverse_one_mpv_patch() {

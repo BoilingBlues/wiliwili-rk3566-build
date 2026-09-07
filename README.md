@@ -162,6 +162,14 @@ cd ~/out
 **编出来的程序在板上无法运行。**  
 sysroot 的 glibc 不能新于板子。本构建按 Ubuntu/Debian 系 aarch64 交叉，绑的是主线内核 + glibc，不是 Armbian 商标。厂商 4.19 + MPP/`rkmpp`、musl、Android、更新的 Fedora glibc 一般都对不上。
 
+**补丁无法应用（既不是未打也不是已打）。**  
+mpv 目录多半是上次失败留下的半成品，或从别处拷来、和 v0.41.0 对不齐。删掉后重下：
+
+```bash
+rm -rf mpv
+./build.sh --rebuild-mpv
+```
+
 **`git apply` 失败，提示源码不可写。**
 
 ```bash

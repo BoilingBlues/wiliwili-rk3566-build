@@ -148,6 +148,9 @@ cd ~/out
 **`build.sh` 报主机缺少某某命令。**  
 按上面「依赖」一节在编译机上安装，不要改脚本去 `apt-get`/`dnf`。Fedora 没有 `crossbuild-essential-arm64`，用 `gcc-aarch64-linux-gnu`。
 
+**`make install` 报 `mkdir: Permission denied`（`install-examples`）。**  
+库已经编完，失败在往 sysroot 里装 examples。sysroot 是 root 建的。拉最新脚本后重跑 `./build.sh --ffmpeg`：会把 `sysroot/usr/local` 改成当前用户可写，并且只安装库和头文件。
+
 **`Unable to locate package qemu-aarch64-static`。**  
 那是二进制名。24.04 装 `qemu-user-static`（universe）；25.10+ 装 `qemu-user` / `qemu-user-binfmt`。不要 `apt install qemu-aarch64-static`。
 

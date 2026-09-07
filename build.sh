@@ -405,6 +405,13 @@ setup_env() {
     export QEMU_LD_PREFIX="${SYSROOT}"
 }
 
+# sysroot 由 debootstrap 建成，属主是 root。把 usr/local 交给当前用户，
+# 以便 FFmpeg/mpv 的 make/meson install 不必 sudo。
+ensure_sysroot_prefix_writable() {
+    sudo mkdir -p "${SYSROOT}/usr/local"
+    sudo chown -R "$(id -un):$(id -gn)" "${SYSROOT}/usr/local"
+}
+
 # ---------------------------------------------------------------------------
 # 4. 交叉编译 FFmpeg
 # ---------------------------------------------------------------------------
@@ -447,7 +454,9 @@ build_ffmpeg() {
 
     info "编译 FFmpeg..."
     make -j"${JOBS}" || die "FFmpeg 编译失败"
-    make install || die "FFmpeg 安装失败"
+    ensure_sysroot_prefix_writable
+    # 只要库和头文件。完整 make install 会 mkdir DATADIR/examples，sysroot 属 root 时失败。
+    make install-libs install-headers || die "FFmpeg 安装失败"
     make distclean || true
 }
 
@@ -637,6 +646,7 @@ build_mpv() {
 
     info "编译 mpv..."
     ninja -C build || die "mpv 编译失败"
+    ensure_sysroot_prefix_writable
     ninja -C build install || die "mpv 安装失败"
 }
 

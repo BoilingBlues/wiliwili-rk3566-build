@@ -1,0 +1,110 @@
+Fix libmpv present timing for 1080p60 judder
+
+1080p60 on a 60 Hz panel stutters when libmpv is told the frame is
+on screen immediately after drawing into an FBO. The real present is
+glfw/SDL SwapBuffers, one vsync later, so mpv's 60 fps pacing drifts.
+
+Report swap after SwapBuffers, and restore video-timing-offset=0.050
+(the previous value 0 was meant for 60 fps but made the late present
+worse).
+
+--- a/library/borealis/library/include/borealis/core/video.hpp
++++ b/library/borealis/library/include/borealis/core/video.hpp
+@@ -77,4 +77,7 @@
+     static inline int monitorIndex = 0;
+ 
+     static inline int swapInterval = 1;
++
++    // Invoked after the platform presents a frame (SwapBuffers / SwapWindow).
++    static inline void (*swapCallback)() = nullptr;
+ };
+--- a/library/borealis/library/lib/platforms/glfw/glfw_video.cpp
++++ b/library/borealis/library/lib/platforms/glfw/glfw_video.cpp
+@@ -432,6 +432,8 @@
+ #elif defined(BOREALIS_USE_D3D11)
+     D3D11_CONTEXT->endFrame();
+ #endif
++    if (VideoContext::swapCallback)
++        VideoContext::swapCallback();
+ }
+ 
+ void GLFWVideoContext::setSwapInterval(int interval)
+--- a/library/borealis/library/lib/platforms/sdl/sdl_video.cpp
++++ b/library/borealis/library/lib/platforms/sdl/sdl_video.cpp
+@@ -360,6 +360,8 @@
+ #elif defined(BOREALIS_USE_D3D11)
+     D3D11_CONTEXT->endFrame();
+ #endif
++    if (VideoContext::swapCallback)
++        VideoContext::swapCallback();
+ }
+ 
+ void SDLVideoContext::setSwapInterval(int interval)
+--- a/wiliwili/source/view/mpv_core.cpp
++++ b/wiliwili/source/view/mpv_core.cpp
+@@ -8,6 +8,7 @@
+ #include <pystring.h>
+ #include <borealis/core/thread.hpp>
+ #include <borealis/core/application.hpp>
++#include <borealis/core/video.hpp>
+ 
+ #include "utils/config_helper.hpp"
+ #include "utils/number_helper.hpp"
+@@ -215,14 +216,12 @@
+ #ifdef MPV_SW_RENDER
+             if (!MPVCore::instance().pixels) return;
+             mpvRenderContextRender(MPVCore::instance().mpv_context, MPVCore::instance().mpv_params);
+-            mpvRenderContextReportSwap(MPVCore::instance().mpv_context);
+ #else
+             mpvRenderContextRender(MPVCore::instance().mpv_context, MPVCore::instance().mpv_params);
+ #ifdef BOREALIS_USE_OPENGL
+             glBindFramebuffer(GL_FRAMEBUFFER, MPVCore::instance().default_framebuffer);
+             glViewport(0, 0, (GLsizei)brls::Application::windowWidth, (GLsizei)brls::Application::windowHeight);
+ #endif
+-            mpvRenderContextReportSwap(MPVCore::instance().mpv_context);
+ #endif
+         }
+ #endif
+@@ -312,7 +311,9 @@
+     mpvSetOptionString(mpv, "idle", "yes");
+     mpvSetOptionString(mpv, "loop-file", "no");
+     mpvSetOptionString(mpv, "osd-level", "0");
+-    mpvSetOptionString(mpv, "video-timing-offset", "0");  // 60fps
++    // 1080p60: reporting present at FBO draw with offset 0 misses vsync and judders.
++    // Swap is glfwSwapBuffers; keep mpv's default 50 ms lead.
++    mpvSetOptionString(mpv, "video-timing-offset", "0.050");
+     mpvSetOptionString(mpv, "keep-open", "yes");
+     mpvSetOptionString(mpv, "hr-seek", "yes");
+     mpvSetOptionString(mpv, "reset-on-next-file", "speed,pause");
+@@ -508,6 +509,11 @@
+     // set render callback
+     mpvRenderContextSetUpdateCallback(mpv_context, on_update, this);
+ 
++    VideoContext::swapCallback = []() {
++        auto ctx = MPVCore::instance().getContext();
++        if (ctx) mpvRenderContextReportSwap(ctx);
++    };
++
+     focusSubscription = brls::Application::getWindowFocusChangedEvent()->subscribe([this](bool focus) {
+         static bool playing = false;
+         static std::chrono::system_clock::time_point sleepTime{};
+@@ -541,6 +547,7 @@
+ #endif
+ 
+ void MPVCore::clean() {
++    VideoContext::swapCallback = nullptr;
+     check_error(mpvCommandString(this->mpv, "quit"));
+ 
+     brls::Application::getWindowFocusChangedEvent()->unsubscribe(focusSubscription);
+@@ -838,7 +845,11 @@
+         glBindFramebuffer(GL_FRAMEBUFFER, default_framebuffer);
+         glViewport(0, 0, brls::Application::windowWidth, brls::Application::windowHeight);
+ #endif
++#ifdef BOREALIS_USE_DEKO3D
+         mpvRenderContextReportSwap(this->mpv_context);
++#elif defined(BOREALIS_USE_D3D11)
++        mpvRenderContextReportSwap(this->mpv_context);
++#endif
+ 
+         // 画背景来覆盖mpv的黑色边框
+         if (rect.getWidth() < brls::Application::contentWidth) {

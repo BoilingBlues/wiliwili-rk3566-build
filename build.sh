@@ -72,11 +72,13 @@ usage() {
   --rebuild-wiliwili  删除 wiliwili/build 后重新配置并编译
   -h, --help          显示此帮助信息
 
-mpv 补丁（patches/series，可回溯）:
-  按 patches/series 从上到下应用。以 # 开头的行会被跳过。
-  若某补丁已打上但被从 series 拿掉，脚本会自动反向打回。
-  回到 copy 硬解: 注释掉 series 里的 zerocopy 补丁后执行 --rebuild-mpv
-  回到 git 基线:   git revert HEAD  或  git checkout 2d8e3da
+补丁（可回溯）:
+  mpv:      patches/series
+  wiliwili: patches/wiliwili.series
+  以 # 开头的行会被跳过；从 series 拿掉的补丁会自动反向打回。
+  回到 copy 硬解:     注释 series 里 zerocopy 补丁后 --rebuild-mpv
+  回到 1080p60 抖动:  注释 wiliwili.series 对应补丁后 --rebuild-wiliwili
+  回到 git 基线:      git revert HEAD  或  git checkout 2d8e3da
 
 示例:
   $0                          # 完整编译
@@ -463,16 +465,16 @@ apply_one_mpv_patch() {
     name="$(basename "${patch}")"
     [ -f "${patch}" ] || die "缺少 mpv 补丁: ${patch}"
     if mpv_patch_applied "${src}" "${patch}"; then
-        info "mpv 补丁已应用，跳过: ${name}"
+        info "补丁已应用，跳过: ${name}"
         return 0
     fi
     if mpv_patch_can_apply "${src}" "${patch}"; then
-        info "应用 mpv 补丁: ${name}"
-        (cd "${src}" && mpv_git_apply "${src}" "${patch}") || die "应用 mpv 补丁失败: ${name}"
-        MPV_PATCHES_CHANGED=true
+        info "应用补丁: ${name}"
+        (cd "${src}" && mpv_git_apply "${src}" "${patch}") || die "应用补丁失败: ${name}"
+        PATCHES_CHANGED=true
         return 0
     fi
-    die "mpv 补丁无法应用（既不是未打也不是已打）: ${name}"
+    die "补丁无法应用（既不是未打也不是已打）: ${name}"
 }
 
 reverse_one_mpv_patch() {
@@ -480,9 +482,9 @@ reverse_one_mpv_patch() {
     name="$(basename "${patch}")"
     [ -f "${patch}" ] || return 0
     if mpv_patch_applied "${src}" "${patch}"; then
-        info "按 series 回滚 mpv 补丁: ${name}"
-        (cd "${src}" && mpv_git_apply "${src}" --reverse "${patch}") || die "回滚 mpv 补丁失败: ${name}"
-        MPV_PATCHES_CHANGED=true
+        info "按 series 回滚补丁: ${name}"
+        (cd "${src}" && mpv_git_apply "${src}" --reverse "${patch}") || die "回滚补丁失败: ${name}"
+        PATCHES_CHANGED=true
     fi
 }
 
@@ -491,22 +493,39 @@ apply_mpv_patches() {
     local patch_dir="${WORK_DIR}/patches"
     local name patch wanted found i
 
-    MPV_PATCHES_CHANGED=false
+    PATCHES_CHANGED=false
     [ -d "${src}" ] || die "mpv 源码不存在: ${src}"
     if [ ! -w "${src}/video/out/hwdec/hwdec_drmprime.c" ]; then
         die "mpv 源码不可写（属主多半是 root）。请先: sudo chown -R \"$(id -un):$(id -gn)\" \"${src}\""
     fi
 
-    read_mpv_series
-    cd "${src}"
+    apply_named_patch_series "${src}" "${WORK_DIR}/patches/series" "${patch_dir}/mpv-*.patch"
+}
 
-    # 先回滚 series 里未列出的补丁（逆序，避免依赖颠倒）。
-    local extra_patches=()
-    for patch in "${patch_dir}"/mpv-*.patch; do
+apply_named_patch_series() {
+    local src="$1" series="$2" glob="$3"
+    local name patch wanted found i extra_patches=()
+    local -a listed=()
+
+    local line
+    [ -f "${series}" ] || die "缺少补丁序列: ${series}"
+    while IFS= read -r line || [ -n "${line}" ]; do
+        line="${line%$'\r'}"
+        case "${line}" in
+            ''|\#*) continue ;;
+        esac
+        name="${line%%#*}"
+        name="${name%"${name##*[![:space:]]}"}"
+        [ -n "${name}" ] || continue
+        listed+=("${name}")
+    done < "${series}"
+    [ "${#listed[@]}" -gt 0 ] || die "${series} 中没有有效补丁"
+
+    for patch in ${glob}; do
         [ -f "${patch}" ] || continue
         name="$(basename "${patch}")"
         found=false
-        for wanted in "${MPV_SERIES_PATCHES[@]}"; do
+        for wanted in "${listed[@]}"; do
             if [ "${wanted}" = "${name}" ]; then
                 found=true
                 break
@@ -519,10 +538,19 @@ apply_mpv_patches() {
     for ((i = ${#extra_patches[@]} - 1; i >= 0; i--)); do
         reverse_one_mpv_patch "${src}" "${extra_patches[$i]}"
     done
-
-    for name in "${MPV_SERIES_PATCHES[@]}"; do
-        apply_one_mpv_patch "${src}" "${patch_dir}/${name}"
+    for name in "${listed[@]}"; do
+        apply_one_mpv_patch "${src}" "${WORK_DIR}/patches/${name}"
     done
+}
+
+apply_wiliwili_patches() {
+    local src="${WORK_DIR}/wiliwili"
+    PATCHES_CHANGED=false
+    [ -d "${src}" ] || die "wiliwili 源码不存在: ${src}"
+    if [ ! -w "${src}/wiliwili/source/view/mpv_core.cpp" ]; then
+        die "wiliwili 源码不可写（属主多半是 root）。请先: sudo chown -R \"$(id -un):$(id -gn)\" \"${src}\""
+    fi
+    apply_named_patch_series "${src}" "${WORK_DIR}/patches/wiliwili.series" "${WORK_DIR}/patches/wiliwili-*.patch"
 }
 
 build_mpv() {
@@ -533,7 +561,7 @@ build_mpv() {
     [ -d "${src}" ] || git clone --depth 1 --branch "${MPV_VERSION}" https://github.com/mpv-player/mpv.git "${src}"
 
     apply_mpv_patches
-    if [ "${MPV_PATCHES_CHANGED}" = true ]; then
+    if [ "${PATCHES_CHANGED}" = true ]; then
         warn "mpv 补丁有变化，将重新编译"
         force_rebuild=true
     fi
@@ -591,22 +619,28 @@ build_wiliwili() {
     local src="${WORK_DIR}/wiliwili"
     local force_rebuild="${1:-false}"
 
-    if [ "${force_rebuild}" = "true" ]; then
-        info "强制重建 wiliwili，删除旧 build 目录..."
-        rm -rf "${src}/build"
-    fi
-
-    if [ -f "${src}/build/wiliwili" ]; then
-        info "wiliwili 已编译，跳过"
-        return
-    fi
-
     info "下载 wiliwili 源码..."
     if [ ! -d "${src}" ]; then
         git clone --recursive https://github.com/xfangfang/wiliwili.git "${src}"
     else
         cd "${src}"
         git submodule update --init --recursive || true
+    fi
+
+    apply_wiliwili_patches
+    if [ "${PATCHES_CHANGED}" = true ]; then
+        warn "wiliwili 补丁有变化，将重新编译"
+        force_rebuild=true
+    fi
+
+    if [ "${force_rebuild}" = "true" ]; then
+        info "强制重建 wiliwili，删除旧 build 目录..."
+        rm -rf "${src}/build"
+    fi
+
+    if [ "${force_rebuild}" != "true" ] && [ -f "${src}/build/wiliwili" ]; then
+        info "wiliwili 已编译，跳过"
+        return
     fi
 
     cd "${src}"

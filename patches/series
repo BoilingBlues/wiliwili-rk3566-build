@@ -1,0 +1,14 @@
+# mpv 补丁应用顺序。从上到下执行；以 # 开头的行会被跳过。
+#
+# 回溯到 copy 路径（不改 git）：
+#   1. 注释掉下面的 mpv-v4l2request-zerocopy-interop.patch
+#   2. ./build.sh --rebuild-mpv
+#   3. 再 ./build.sh --rebuild-wiliwili
+#
+# 回溯到本仓库基线：
+#   git log --oneline
+#   git revert HEAD          # 只撤销零拷贝这次提交
+#   git checkout 2d8e3da     # 或直接回到初次提交
+#
+mpv-v4l2request-hwdec.patch
+mpv-v4l2request-zerocopy-interop.patch

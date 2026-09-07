@@ -72,11 +72,18 @@ usage() {
   --rebuild-wiliwili  删除 wiliwili/build 后重新配置并编译
   -h, --help          显示此帮助信息
 
+mpv 补丁（patches/series，可回溯）:
+  按 patches/series 从上到下应用。以 # 开头的行会被跳过。
+  若某补丁已打上但被从 series 拿掉，脚本会自动反向打回。
+  回到 copy 硬解: 注释掉 series 里的 zerocopy 补丁后执行 --rebuild-mpv
+  回到 git 基线:   git revert HEAD  或  git checkout 2d8e3da
+
 示例:
   $0                          # 完整编译
   $0 --update-sysroot         # 仅更新 sysroot 中的依赖包
   $0 --clean                  # 清编译环境后重编 (保留 sysroot apt)
   $0 --mpv                    # 仅重新编译 mpv
+  $0 --rebuild-mpv            # 补丁或音频变更后强制重编 mpv
   $0 --rebuild-wiliwili       # 清掉旧 CMake 缓存后重编 wiliwili
 EOF
 }
@@ -417,33 +424,119 @@ build_ffmpeg() {
 # ---------------------------------------------------------------------------
 # 5. 交叉编译 mpv
 # ---------------------------------------------------------------------------
+# 读取 patches/series 中未注释的补丁名，写入 MPV_SERIES_PATCHES。
+read_mpv_series() {
+    local series="${WORK_DIR}/patches/series"
+    local line name
+    MPV_SERIES_PATCHES=()
+    [ -f "${series}" ] || die "缺少补丁序列: ${series}"
+    while IFS= read -r line || [ -n "${line}" ]; do
+        line="${line%$'\r'}"
+        case "${line}" in
+            ''|\#*) continue ;;
+        esac
+        name="${line%%#*}"
+        name="${name%"${name##*[![:space:]]}"}"
+        [ -n "${name}" ] || continue
+        MPV_SERIES_PATCHES+=("${name}")
+    done < "${series}"
+    [ "${#MPV_SERIES_PATCHES[@]}" -gt 0 ] || die "patches/series 中没有有效补丁"
+}
+
+mpv_git_apply() {
+    git -c "safe.directory=${1}" apply --whitespace=nowarn "${@:2}"
+}
+
+# 补丁是否已经打在 src 上。
+mpv_patch_applied() {
+    local src="$1" patch="$2"
+    (cd "${src}" && mpv_git_apply "${src}" --reverse --check "${patch}") >/dev/null 2>&1
+}
+
+mpv_patch_can_apply() {
+    local src="$1" patch="$2"
+    (cd "${src}" && mpv_git_apply "${src}" --check "${patch}") >/dev/null 2>&1
+}
+
+apply_one_mpv_patch() {
+    local src="$1" patch="$2" name
+    name="$(basename "${patch}")"
+    [ -f "${patch}" ] || die "缺少 mpv 补丁: ${patch}"
+    if mpv_patch_applied "${src}" "${patch}"; then
+        info "mpv 补丁已应用，跳过: ${name}"
+        return 0
+    fi
+    if mpv_patch_can_apply "${src}" "${patch}"; then
+        info "应用 mpv 补丁: ${name}"
+        (cd "${src}" && mpv_git_apply "${src}" "${patch}") || die "应用 mpv 补丁失败: ${name}"
+        MPV_PATCHES_CHANGED=true
+        return 0
+    fi
+    die "mpv 补丁无法应用（既不是未打也不是已打）: ${name}"
+}
+
+reverse_one_mpv_patch() {
+    local src="$1" patch="$2" name
+    name="$(basename "${patch}")"
+    [ -f "${patch}" ] || return 0
+    if mpv_patch_applied "${src}" "${patch}"; then
+        info "按 series 回滚 mpv 补丁: ${name}"
+        (cd "${src}" && mpv_git_apply "${src}" --reverse "${patch}") || die "回滚 mpv 补丁失败: ${name}"
+        MPV_PATCHES_CHANGED=true
+    fi
+}
+
 apply_mpv_patches() {
     local src="${WORK_DIR}/mpv"
-    local patch="${WORK_DIR}/patches/mpv-v4l2request-hwdec.patch"
-    [ -f "${patch}" ] || die "缺少 mpv 补丁: ${patch}"
+    local patch_dir="${WORK_DIR}/patches"
+    local name patch wanted found i
 
-    cd "${src}"
-    if grep -q 'ra_hwdec_drmprime_v4l2request' video/out/hwdec/hwdec_drmprime.c; then
-        info "mpv v4l2request 补丁已应用，跳过"
-        return
-    fi
-    if [ ! -w video/out/hwdec/hwdec_drmprime.c ]; then
+    MPV_PATCHES_CHANGED=false
+    [ -d "${src}" ] || die "mpv 源码不存在: ${src}"
+    if [ ! -w "${src}/video/out/hwdec/hwdec_drmprime.c" ]; then
         die "mpv 源码不可写（属主多半是 root）。请先: sudo chown -R \"$(id -un):$(id -gn)\" \"${src}\""
     fi
-    info "应用 mpv v4l2request 硬解补丁..."
-    local git_apply=(git -c "safe.directory=${src}" apply --whitespace=nowarn)
-    # 上次失败可能已经打上 vd_lavc.c / hwdec.c，只补 drmprime 即可。
-    if grep -q '{"v4l2request"' video/decode/vd_lavc.c; then
-        "${git_apply[@]}" --include=video/out/hwdec/hwdec_drmprime.c "${patch}" \
-            || die "应用 mpv 补丁失败（drmprime）"
-    else
-        "${git_apply[@]}" "${patch}" || die "应用 mpv 补丁失败"
-    fi
+
+    read_mpv_series
+    cd "${src}"
+
+    # 先回滚 series 里未列出的补丁（逆序，避免依赖颠倒）。
+    local extra_patches=()
+    for patch in "${patch_dir}"/mpv-*.patch; do
+        [ -f "${patch}" ] || continue
+        name="$(basename "${patch}")"
+        found=false
+        for wanted in "${MPV_SERIES_PATCHES[@]}"; do
+            if [ "${wanted}" = "${name}" ]; then
+                found=true
+                break
+            fi
+        done
+        if [ "${found}" = false ]; then
+            extra_patches+=("${patch}")
+        fi
+    done
+    for ((i = ${#extra_patches[@]} - 1; i >= 0; i--)); do
+        reverse_one_mpv_patch "${src}" "${extra_patches[$i]}"
+    done
+
+    for name in "${MPV_SERIES_PATCHES[@]}"; do
+        apply_one_mpv_patch "${src}" "${patch_dir}/${name}"
+    done
 }
 
 build_mpv() {
     local src="${WORK_DIR}/mpv"
     local force_rebuild="${1:-false}"
+
+    info "下载 mpv 源码 (稳定版 ${MPV_VERSION})..."
+    [ -d "${src}" ] || git clone --depth 1 --branch "${MPV_VERSION}" https://github.com/mpv-player/mpv.git "${src}"
+
+    apply_mpv_patches
+    if [ "${MPV_PATCHES_CHANGED}" = true ]; then
+        warn "mpv 补丁有变化，将重新编译"
+        force_rebuild=true
+    fi
 
     if [ "${force_rebuild}" != "true" ] && [ -f "${SYSROOT}/usr/local/lib/libmpv.so" ]; then
         if [ -f "${src}/build/config.h" ] && grep -q '^#define HAVE_PULSE 1' "${src}/build/config.h" \
@@ -455,15 +548,10 @@ build_mpv() {
         force_rebuild=true
     fi
 
-    info "下载 mpv 源码 (稳定版 ${MPV_VERSION})..."
-    [ -d "${src}" ] || git clone --depth 1 --branch "${MPV_VERSION}" https://github.com/mpv-player/mpv.git "${src}"
-
     if [ "${force_rebuild}" = "true" ]; then
         info "强制重建 mpv，删除旧 build 目录..."
         rm -rf "${src}/build"
     fi
-
-    apply_mpv_patches
 
     cd "${src}"
     info "配置 mpv (meson 交叉编译)..."

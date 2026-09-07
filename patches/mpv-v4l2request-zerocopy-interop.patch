@@ -1,0 +1,65 @@
+Compile v4l2request zero-copy GL interop
+
+AV_HWDEVICE_TYPE_V4L2REQUEST is an FFmpeg enum, not a preprocessor
+macro. #ifdef on it is always false, so ra_hwdec_drmprime_v4l2request
+was compiled out and mpv could only use v4l2request-copy.
+
+Apply after mpv-v4l2request-hwdec.patch. Comment this file out in
+patches/series, then ./build.sh --rebuild-mpv, to return to copy path.
+
+--- a/video/out/gpu/hwdec.c
++++ b/video/out/gpu/hwdec.c
+@@ -36,9 +36,7 @@
+ extern const struct ra_hwdec_driver ra_hwdec_cuda;
+ extern const struct ra_hwdec_driver ra_hwdec_drmprime;
+ extern const struct ra_hwdec_driver ra_hwdec_drmprime_overlay;
+-#ifdef AV_HWDEVICE_TYPE_V4L2REQUEST
+ extern const struct ra_hwdec_driver ra_hwdec_drmprime_v4l2request;
+-#endif
+ extern const struct ra_hwdec_driver ra_hwdec_aimagereader;
+ extern const struct ra_hwdec_driver ra_hwdec_vulkan;
+ 
+@@ -75,10 +73,8 @@
+ #if HAVE_DRM
+     &ra_hwdec_drmprime,
+     &ra_hwdec_drmprime_overlay,
+-#ifdef AV_HWDEVICE_TYPE_V4L2REQUEST
+     &ra_hwdec_drmprime_v4l2request,
+ #endif
+-#endif
+ #if HAVE_ANDROID_MEDIA_NDK
+     &ra_hwdec_aimagereader,
+ #endif
+--- a/video/out/hwdec/hwdec_drmprime.c
++++ b/video/out/hwdec/hwdec_drmprime.c
+@@ -110,16 +110,13 @@
+     const char *opt_path = drm_opts->device_path;
+ 
+     int ret;
+-#ifdef AV_HWDEVICE_TYPE_V4L2REQUEST
+     if (hw->driver->device_type == AV_HWDEVICE_TYPE_V4L2REQUEST) {
+         MP_VERBOSE(hw, "Using V4L2 Request API (auto-detect media device)\n");
+         ret = av_hwdevice_ctx_create(&p->hwctx.av_device_ref,
+                                      AV_HWDEVICE_TYPE_V4L2REQUEST,
+                                      NULL, NULL, 0);
+         talloc_free(tmp);
+-    } else
+-#endif
+-    {
++    } else {
+         const char *device_path = params && params->render_fd > -1 ?
+                                   drmGetRenderDeviceNameFromFd(params->render_fd) :
+                                   opt_path ? opt_path : "/dev/dri/renderD128";
+@@ -333,7 +330,6 @@
+     .mapper = &drmprime_mapper,
+ };
+ 
+-#ifdef AV_HWDEVICE_TYPE_V4L2REQUEST
+ const struct ra_hwdec_driver ra_hwdec_drmprime_v4l2request = {
+     .name = "v4l2request",
+     .priv_size = sizeof(struct priv_owner),
+@@ -343,4 +339,3 @@
+     .uninit = uninit,
+     .mapper = &drmprime_mapper,
+ };
+-#endif

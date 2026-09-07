@@ -91,20 +91,26 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
-# 0. 检查并安装主机依赖
+# 0. 检查主机依赖（不在此 sudo 安装，见 README）
 # ---------------------------------------------------------------------------
-install_host_deps() {
-    info "检查并安装主机构建依赖..."
-    sudo apt-get update
-    sudo apt-get install -y \
-        crossbuild-essential-arm64 \
-        qemu-user-static binfmt-support debootstrap \
-        cmake meson ninja-build pkg-config \
-        git wget curl python3 \
-        symlinks || warn "symlinks 安装失败，将使用备用方案修复软链接"
+check_host_deps() {
+    info "检查主机构建依赖..."
+
+    local missing=()
+    local cmd
+    for cmd in cmake meson ninja pkg-config git python3 debootstrap wget curl; do
+        command -v "${cmd}" >/dev/null 2>&1 || missing+=("${cmd}")
+    done
+    if [ ! -x /usr/bin/qemu-aarch64-static ] && ! command -v qemu-aarch64-static >/dev/null 2>&1; then
+        missing+=("qemu-aarch64-static")
+    fi
 
     if [ ! -x "${HOST_CC}" ] || [ ! -x "${HOST_CXX}" ]; then
-        die "未找到主机交叉编译器 ${HOST_CC}。请确认已安装 crossbuild-essential-arm64"
+        missing+=("${HOST_CC}")
+    fi
+
+    if [ "${#missing[@]}" -gt 0 ]; then
+        die "主机缺少: ${missing[*]}。请先按 README 安装依赖，不要用本脚本 sudo 装包。"
     fi
 
     # 必须跟随符号链接看真实 ELF。否则 file 会输出
@@ -805,7 +811,7 @@ main() {
     mkdir -p "${WORK_DIR}"
     cd "${WORK_DIR}"
 
-    install_host_deps
+    check_host_deps
 
     if [ "$DO_REBUILD_SYSROOT" = true ]; then
         info "准备重建 sysroot..."

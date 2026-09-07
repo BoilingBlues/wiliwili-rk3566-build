@@ -35,12 +35,30 @@ FFmpeg、mpv、wiliwili 源码和 sysroot **不进 git**。
 
 ## 依赖（编译主机）
 
-- x86_64 Linux（Debian / Ubuntu 一类）
-- `aarch64-linux-gnu-gcc` 交叉工具链
-- `meson`、`ninja`、`cmake`、`pkg-config`、`debootstrap`、`qemu-user-static`
-- 能 `sudo`（装主机包、做 sysroot）
+`build.sh` **不会**在主机上 `sudo` 装包，缺工具会直接退出。请先自行安装。做 sysroot 时仍需要 `sudo`（debootstrap / chroot）。
 
-脚本会尝试安装主机依赖。
+**Debian / Ubuntu：**
+
+```bash
+sudo apt-get update
+sudo apt-get install -y \
+    crossbuild-essential-arm64 \
+    qemu-user-static binfmt-support debootstrap \
+    cmake meson ninja-build pkg-config \
+    git wget curl python3 file
+```
+
+**Fedora：**
+
+```bash
+sudo dnf install -y \
+    gcc-aarch64-linux-gnu gcc-c++-aarch64-linux-gnu \
+    qemu-user-static debootstrap \
+    cmake meson ninja-build pkgconf \
+    git wget curl python3 file
+```
+
+交叉编译器须是 **x86_64** 上的 `aarch64-linux-gnu-gcc`，不能是板子上拷来的 aarch64 二进制。
 
 ## 快速开始
 
@@ -111,6 +129,9 @@ cd ~/out
 回滚某补丁：在对应 series 里注释掉该行，再 `--rebuild-mpv` 或 `--rebuild-wiliwili`。
 
 ## 常见问题
+
+**`build.sh` 报主机缺少某某命令。**  
+按上面「依赖」一节在编译机上安装，不要改脚本去 `apt-get`/`dnf`。Fedora 没有 `crossbuild-essential-arm64`，用 `gcc-aarch64-linux-gnu`。
 
 **编出来的程序在板上无法运行。**  
 sysroot 的 glibc 不能新于板子。本构建按 Ubuntu/Debian 系 aarch64 交叉，绑的是主线内核 + glibc，不是 Armbian 商标。厂商 4.19 + MPP/`rkmpp`、musl、Android、更新的 Fedora glibc 一般都对不上。

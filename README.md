@@ -39,13 +39,28 @@ FFmpeg、mpv、wiliwili 源码和 sysroot **不进 git**。
 
 **Debian / Ubuntu：**
 
+`qemu-aarch64-static` 是**命令名**，不是包名。找不到包时先开 universe：
+
 ```bash
+sudo apt-get update
+sudo apt-get install -y software-properties-common
+sudo add-apt-repository universe
 sudo apt-get update
 sudo apt-get install -y \
     crossbuild-essential-arm64 \
-    qemu-user-static binfmt-support debootstrap \
+    debootstrap binfmt-support \
     cmake meson ninja-build pkg-config \
     git wget curl python3 file
+```
+
+再装 QEMU 用户态模拟（二选一）：
+
+```bash
+# Ubuntu 24.04 / Debian 12：二进制为 /usr/bin/qemu-aarch64-static
+sudo apt-get install -y qemu-user-static
+
+# Ubuntu 25.10 / 26.04：包 qemu-user-static 可能已变成虚包，二进制常为 qemu-aarch64
+sudo apt-get install -y qemu-user qemu-user-binfmt
 ```
 
 **Fedora：**
@@ -132,6 +147,9 @@ cd ~/out
 
 **`build.sh` 报主机缺少某某命令。**  
 按上面「依赖」一节在编译机上安装，不要改脚本去 `apt-get`/`dnf`。Fedora 没有 `crossbuild-essential-arm64`，用 `gcc-aarch64-linux-gnu`。
+
+**`Unable to locate package qemu-aarch64-static`。**  
+那是二进制名。24.04 装 `qemu-user-static`（universe）；25.10+ 装 `qemu-user` / `qemu-user-binfmt`。不要 `apt install qemu-aarch64-static`。
 
 **编出来的程序在板上无法运行。**  
 sysroot 的 glibc 不能新于板子。本构建按 Ubuntu/Debian 系 aarch64 交叉，绑的是主线内核 + glibc，不是 Armbian 商标。厂商 4.19 + MPP/`rkmpp`、musl、Android、更新的 Fedora glibc 一般都对不上。

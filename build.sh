@@ -90,6 +90,31 @@ usage() {
 EOF
 }
 
+# 用户态 aarch64 模拟器。Ubuntu 24.04 为 qemu-aarch64-static（包 qemu-user-static），
+# 25.10+ 常为 qemu-aarch64（包 qemu-user / qemu-user-binfmt）。
+qemu_aarch64_bin() {
+    local p
+    for p in /usr/bin/qemu-aarch64-static /usr/bin/qemu-aarch64; do
+        if [ -x "${p}" ]; then
+            echo "${p}"
+            return 0
+        fi
+    done
+    p="$(command -v qemu-aarch64-static 2>/dev/null || true)"
+    [ -n "${p}" ] && [ -x "${p}" ] && echo "${p}" && return 0
+    p="$(command -v qemu-aarch64 2>/dev/null || true)"
+    [ -n "${p}" ] && [ -x "${p}" ] && echo "${p}" && return 0
+    return 1
+}
+
+install_qemu_into_sysroot() {
+    local src
+    src="$(qemu_aarch64_bin)" || die "未找到 qemu-aarch64。请按 README 安装 qemu-user-static 或 qemu-user。"
+    sudo mkdir -p "${SYSROOT}/usr/bin"
+    sudo cp "${src}" "${SYSROOT}/usr/bin/qemu-aarch64-static"
+    sudo chmod +x "${SYSROOT}/usr/bin/qemu-aarch64-static"
+}
+
 # ---------------------------------------------------------------------------
 # 0. 检查主机依赖（不在此 sudo 安装，见 README）
 # ---------------------------------------------------------------------------
@@ -101,8 +126,8 @@ check_host_deps() {
     for cmd in cmake meson ninja pkg-config git python3 debootstrap wget curl; do
         command -v "${cmd}" >/dev/null 2>&1 || missing+=("${cmd}")
     done
-    if [ ! -x /usr/bin/qemu-aarch64-static ] && ! command -v qemu-aarch64-static >/dev/null 2>&1; then
-        missing+=("qemu-aarch64-static")
+    if ! qemu_aarch64_bin >/dev/null; then
+        missing+=("qemu-aarch64（包名 qemu-user-static 或 qemu-user，不是 qemu-aarch64-static）")
     fi
 
     if [ ! -x "${HOST_CC}" ] || [ ! -x "${HOST_CXX}" ]; then
@@ -153,10 +178,8 @@ create_sysroot() {
         "${SYSROOT}" \
         http://ports.ubuntu.com/ubuntu-ports/ || die "debootstrap 失败"
 
-    sudo cp /usr/bin/qemu-aarch64-static "${SYSROOT}/usr/bin/"
-
+    install_qemu_into_sysroot
     install_sysroot_deps
-
     sudo rm -f "${SYSROOT}/usr/bin/qemu-aarch64-static"
 }
 
@@ -174,7 +197,7 @@ install_sysroot_deps() {
             | sudo xargs -0 -r sed -i 's/Components: main$/Components: main universe/'
     fi
 
-    sudo cp /usr/bin/qemu-aarch64-static "${SYSROOT}/usr/bin/"
+    install_qemu_into_sysroot
     sudo chroot "${SYSROOT}" apt-get update
 
     sudo chroot "${SYSROOT}" apt-get install -y symlinks 2>/dev/null || warn "symlinks 包不可用"
@@ -240,8 +263,7 @@ update_sysroot() {
     fi
 
     info "更新现有 sysroot 中的依赖..."
-    sudo cp /usr/bin/qemu-aarch64-static "${SYSROOT}/usr/bin/"
-
+    install_qemu_into_sysroot
     install_sysroot_deps
 
     sudo rm -f "${SYSROOT}/usr/bin/qemu-aarch64-static"
